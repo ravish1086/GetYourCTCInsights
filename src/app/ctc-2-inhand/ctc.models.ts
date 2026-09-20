@@ -4,6 +4,7 @@ export type CtcComponentCategory =
   | 'reimbursement'
   | 'employer-cost'
   | 'employee-deduction'
+  | 'employee-pf'
   | 'other';
 
 export interface CtcComponent {
@@ -75,6 +76,7 @@ export interface CtcCalculation {
   exemptIncomeAnnual: number;
   employerCostOnlyAnnual: number;
   employeeDeductionsAnnual: number;
+  employeePfAnnual: number;
   baseTaxAnnual: number;
   cessAnnual: number;
   surchargeAnnual: number;
@@ -145,6 +147,11 @@ export const CATEGORY_META: Record<
     defaults: { includeInCtc: false, taxable: false, includeInHand: false, isEmployeeDeduction: true, subtractBeforeTax: true, includeInAppraisal: false },
     hint: 'NOT part of CTC — simply subtracted from gross: Final = Gross − DEDN, tax on final.',
   },
+  'employee-pf': {
+    label: 'Employee PF',
+    defaults: { includeInCtc: false, taxable: false, includeInHand: false, isEmployeeDeduction: false, subtractBeforeTax: false, includeInAppraisal: false },
+    hint: 'Deducted from in-hand pay only — not part of CTC, gross, taxable income, or cash.',
+  },
   other: {
     label: 'Other / Custom',
     defaults: { includeInCtc: true, taxable: true, includeInHand: true, isEmployeeDeduction: false, subtractBeforeTax: false, includeInAppraisal: true },
@@ -206,6 +213,11 @@ export function sampleComponents(): CtcComponent[] {
       includeInHand: false,
       isEmployeeDeduction: false,
       subtractBeforeTax: true,
+    }),
+    newComponent({
+      name: 'Employee PF (in-hand deduction)',
+      annualAmount: 36000,
+      category: 'employee-pf',
     }),
   ];
 }

@@ -39,6 +39,10 @@ export function isPreTaxDeduction(c: CtcComponent): boolean {
   return c.isEmployeeDeduction === true || c.subtractBeforeTax === true;
 }
 
+export function isEmployeePf(c: CtcComponent): boolean {
+  return c.category === 'employee-pf';
+}
+
 export interface LineItem {
   component: CtcComponent;
   /** +1 adds, -1 subtracts in this section */
@@ -132,6 +136,8 @@ export function calculateCtc(
   const grossCashAnnual = list
     .filter((c) => c.includeInHand === true && !isDedn(c))
     .reduce((s, c) => s + amt(c), 0);
+  // Employee PF is deducted only from in-hand (not from CTC, gross, taxable, or cash).
+  const employeePfAnnual = list.filter((c) => isEmployeePf(c)).reduce((s, c) => s + amt(c), 0);
   // Display total of DEDN rows (only ever subtracted from gross).
   const employeeDeductionsAnnual = preTaxDeductionsAnnual;
 
@@ -201,8 +207,8 @@ export function calculateCtc(
   const cessAnnual = (baseTaxAnnual * Math.max(0, num(tax.cessPercent))) / 100;
   const surchargeAnnual = (baseTaxAnnual * Math.max(0, num(tax.surchargePercent))) / 100;
   const totalTaxAnnual = baseTaxAnnual + cessAnnual + surchargeAnnual;
-  // In-hand = cash (no DEDN inside) − tax on final.
-  const inHandAnnual = Math.max(0, grossCashAnnual - totalTaxAnnual);
+  // In-hand = cash (no DEDN inside) − tax on final − Employee PF (deducted only from in-hand).
+  const inHandAnnual = Math.max(0, grossCashAnnual - totalTaxAnnual - employeePfAnnual);
 
   return {
     ctcAnnual,
@@ -213,6 +219,7 @@ export function calculateCtc(
     exemptIncomeAnnual,
     employerCostOnlyAnnual,
     employeeDeductionsAnnual,
+    employeePfAnnual,
     baseTaxAnnual,
     cessAnnual,
     surchargeAnnual,
