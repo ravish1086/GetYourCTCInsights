@@ -6,7 +6,7 @@
   },
   "newProjectRoot": "projects",
   "projects": {
-    "test-angular": {
+    "GetYourCTCInsight": {
       "projectType": "application",
       "schematics": {
         "@schematics/angular:component": {
@@ -61,10 +61,10 @@
           "builder": "@angular/build:dev-server",
           "configurations": {
             "production": {
-              "buildTarget": "test-angular:build:production"
+              "buildTarget": "GetYourCTCInsight:build:production"
             },
             "development": {
-              "buildTarget": "test-angular:build:development"
+              "buildTarget": "GetYourCTCInsight:build:development"
             }
           },
           "defaultConfiguration": "development"
