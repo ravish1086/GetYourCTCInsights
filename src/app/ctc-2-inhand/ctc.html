@@ -198,7 +198,8 @@
 }
 </tbody>
 </table>
-<p class="formula">In-hand = {{ shown(cc.grossCashAnnual) }} (cash, no DEDN) − {{ shown(cc.totalTaxAnnual) }} (tax on final) = <b>{{ shown(cc.inHandAnnual) }}</b> {{ viewMode()==='annual' ? '' : 'per month' }}</p>
+<p class="formula">In-hand = {{ shown(cc.grossCashAnnual) }} (cash, no DEDN) − {{ shown(cc.totalTaxAnnual) }} (tax on final) − {{ shown(cc.employeePfAnnual) }} (Employee PF) = <b>{{ shown(cc.inHandAnnual) }}</b> {{ viewMode()==='annual' ? '' : 'per month' }}</p>
+  <p class="muted">Cash includes taxable earnings + exempt/reimbursements. Excludes DEDN rows. Employee PF is deducted later from in-hand (not from cash).</p>
 </div>
 <div class="grid2">
 <div class="step">
