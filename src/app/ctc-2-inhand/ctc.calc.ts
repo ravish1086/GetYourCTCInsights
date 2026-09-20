@@ -1,5 +1,5 @@
 import { CtcCalculation, SlabBreakup, TaxConfig, TaxSlab, DEFAULT_TAX_CONFIG } from './ctc.models';
-import { CtcComponent } from './ctc.models';
+import { AppraisalPreview, CtcComponent, isAppraisalEligible, monthsInPhase } from './ctc.models';
 
 export function sanitizeSlabs(slabs: TaxSlab[]): TaxSlab[] {
   const clean = (slabs ?? [])
@@ -46,11 +46,59 @@ export interface LineItem {
   runningTotal: number;
 }
 
-export function calculateCtc(components: CtcComponent[], tax: TaxConfig): CtcCalculation {
+export interface PhaseSlice {
+  phaseId: string;
+  phaseName: string;
+  fromMonth: number;
+  toMonth: number;
+  months: number;
+  /** FY-annual contribution of this phase (monthly × months) */
+  ctcAnnual: number;
+  grossTaxableAnnual: number;
+  preTaxDeductionsAnnual: number;
+  taxableIncomeAnnual: number;
+  grossCashAnnual: number;
+  /** monthly rates inside this phase */
+  monthlyCtc: number;
+  monthlyGross: number;
+  monthlyCash: number;
+}
+
+/** Resolve the FY-annual figure for every component: either the plain stored
+ * annual, or the pro-rated Σ phase-monthly × months when FY mode is enabled. */
+export function resolveFyAnnuals(
+  components: CtcComponent[],
+  fy?: { enabled: boolean; phases: { fromMonth: number; toMonth: number; monthlyByComponentId: Record<string, number> }[] }
+): { annualById: Map<string, number>; fyEnabled: boolean } {
+  const annualById = new Map<string, number>();
+  if (!fy?.enabled || !Array.isArray(fy.phases) || fy.phases.length === 0) {
+    for (const c of components) annualById.set(c.id, Number(c.annualAmount) || 0);
+    return { annualById, fyEnabled: false };
+  }
+  for (const c of components) {
+    let total = 0;
+    for (const ph of fy.phases) {
+      const months = monthsInPhase(ph.fromMonth, ph.toMonth);
+      const monthly = Number(ph.monthlyByComponentId?.[c.id]);
+      total += (Number.isFinite(monthly) ? monthly : (Number(c.annualAmount) || 0) / 12) * months;
+    }
+    annualById.set(c.id, total);
+  }
+  return { annualById, fyEnabled: true };
+}
+
+export function calculateCtc(
+  components: CtcComponent[],
+  tax: TaxConfig,
+  fy?: { enabled: boolean; phases: { id: string; name: string; fromMonth: number; toMonth: number; monthlyByComponentId: Record<string, number> }[] }
+): CtcCalculation {
   const list = components ?? [];
   const num = (v: unknown) => Number(v) || 0;
   // Simple rule: DEDN is never added to CTC/gross/cash — only subtracted from gross.
   // Final = Gross − DEDN. Tax runs on Final. Ex: 100000 − 10000 = 90000.
+  // When fy.enabled, per-component annuals are pro-rated Σ monthly × months.
+  const { annualById, fyEnabled } = resolveFyAnnuals(list, fy);
+  const amt = (c: CtcComponent) => annualById.get(c.id) ?? num(c.annualAmount);
   const flags = new Map<string, ComponentFlags>(list.map((c) => [c.id, classifyComponent(c)]));
   const inGross = (c: CtcComponent) => flags.get(c.id)?.inGross === true;
   const isDedn = (c: CtcComponent) => flags.get(c.id)?.preTax === true;
@@ -58,32 +106,32 @@ export function calculateCtc(components: CtcComponent[], tax: TaxConfig): CtcCal
   const asLines = (items: CtcComponent[], sign: 1 | -1): LineItem[] => {
     let run = 0;
     return items.map((component) => {
-      run += sign * num(component.annualAmount);
+      run += sign * amt(component);
       return { component, sign, runningTotal: run };
     });
   };
 
-  const ctcAnnual = list.filter((c) => c.includeInCtc).reduce((s, c) => s + num(c.annualAmount), 0);
+  const ctcAnnual = list.filter((c) => c.includeInCtc).reduce((s, c) => s + amt(c), 0);
   // Gross = earnings only (DEDN never added here).
   const grossTaxableAnnual = list
     .filter((c) => inGross(c))
-    .reduce((s, c) => s + num(c.annualAmount), 0);
+    .reduce((s, c) => s + amt(c), 0);
   // DEDN subtracted from gross: Final = Gross − DEDN (100000 − 10000 = 90000).
   const preTaxDeductionsAnnual = list
     .filter((c) => isDedn(c))
-    .reduce((s, c) => s + num(c.annualAmount), 0);
+    .reduce((s, c) => s + amt(c), 0);
   // Final figure slabs are actually applied on (floored at 0).
   const taxableIncomeAnnual = Math.max(0, grossTaxableAnnual - preTaxDeductionsAnnual);
   const exemptIncomeAnnual = list
     .filter((c) => !c.taxable && c.includeInHand && !isDedn(c))
-    .reduce((s, c) => s + num(c.annualAmount), 0);
+    .reduce((s, c) => s + amt(c), 0);
   const employerCostOnlyAnnual = list
     .filter((c) => c.includeInCtc && c.includeInHand !== true && !isDedn(c))
-    .reduce((s, c) => s + num(c.annualAmount), 0);
+    .reduce((s, c) => s + amt(c), 0);
   // Cash = earnings cash only (DEDN never added) — tax is the only reduction.
   const grossCashAnnual = list
     .filter((c) => c.includeInHand === true && !isDedn(c))
-    .reduce((s, c) => s + num(c.annualAmount), 0);
+    .reduce((s, c) => s + amt(c), 0);
   // Display total of DEDN rows (only ever subtracted from gross).
   const employeeDeductionsAnnual = preTaxDeductionsAnnual;
 
@@ -100,6 +148,39 @@ export function calculateCtc(components: CtcComponent[], tax: TaxConfig): CtcCal
     1
   );
   const ctcLines = asLines(list.filter((c) => c.includeInCtc), 1);
+
+  // Per-phase FY slices (only when FY mode is on) for the phase table.
+  let phaseSlices: PhaseSlice[] = [];
+  if (fyEnabled && fy) {
+    phaseSlices = fy.phases.map((ph) => {
+      const months = monthsInPhase(ph.fromMonth, ph.toMonth);
+      const mOf = (c: CtcComponent) => {
+        const m = Number(ph.monthlyByComponentId?.[c.id]);
+        return Number.isFinite(m) ? m : amt(c) / 12;
+      };
+      const slice = (pred: (c: CtcComponent) => boolean) =>
+        list.filter(pred).reduce((s, c) => s + mOf(c) * months, 0);
+      const ctc = slice((c) => c.includeInCtc);
+      const gross = slice((c) => inGross(c));
+      const dedn = slice((c) => isDedn(c));
+      const cash = slice((c) => c.includeInHand === true && !isDedn(c));
+      return {
+        phaseId: ph.id,
+        phaseName: ph.name,
+        fromMonth: ph.fromMonth,
+        toMonth: ph.toMonth,
+        months,
+        ctcAnnual: ctc,
+        grossTaxableAnnual: gross,
+        preTaxDeductionsAnnual: dedn,
+        taxableIncomeAnnual: Math.max(0, gross - dedn),
+        grossCashAnnual: cash,
+        monthlyCtc: months > 0 ? ctc / months : 0,
+        monthlyGross: months > 0 ? gross / months : 0,
+        monthlyCash: months > 0 ? cash / months : 0,
+      };
+    });
+  }
 
   const slabs = sanitizeSlabs(tax.slabs);
   const income = Math.max(0, taxableIncomeAnnual);
@@ -148,6 +229,8 @@ export function calculateCtc(components: CtcComponent[], tax: TaxConfig): CtcCal
     exemptLines,
     employerOnlyLines,
     ctcLines,
+    fyEnabled,
+    phaseSlices,
   };
 }
 

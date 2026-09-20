@@ -1,7 +1,7 @@
 import { Component, inject, signal, computed } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { CtcStore } from './ctc.store';
-import { CATEGORY_META, CtcComponent, CtcComponentCategory, newComponent } from './ctc.models';
+import { CATEGORY_META, CtcComponent, CtcComponentCategory, FY_MONTHS, FyMonthIndex, fyMonthLabel, monthsInPhase, newComponent } from './ctc.models';
 import { LineItem, formatINR } from './ctc.calc';
 
 @Component({
@@ -17,12 +17,16 @@ export class Ctc2Inhand {
 
   readonly categoryKeys = Object.keys(CATEGORY_META) as CtcComponentCategory[];
   readonly categoryMeta = CATEGORY_META;
+  readonly fyMonths = FY_MONTHS;
+  readonly fyMonthName = fyMonthLabel;
+  readonly monthsInPhase = monthsInPhase;
 
   // --- add-component form ---
   newName = '';
   newAmount: number | null = null;
   newCategory: CtcComponentCategory = 'taxable-earning';
   newMonthly = false;
+  hikePercent: number | null = null;
 
   // --- profile form ---
   newProfileName = '';
@@ -31,7 +35,7 @@ export class Ctc2Inhand {
   showTaxEditor = signal(true);
   showBreakup = signal(true);
   showCalc = signal(true);
-  activeTab = signal<'components' | 'calc' | 'tax' | 'profiles'>('components');
+  activeTab = signal<'components' | 'calc' | 'fy' | 'tax' | 'profiles'>('components');
 
   viewMode = signal<'annual' | 'monthly'>('annual');
 
@@ -65,8 +69,23 @@ export class Ctc2Inhand {
     return to === null ? 'Above' : formatINR(to);
   }
 
-  setTab(t: 'components' | 'calc' | 'tax' | 'profiles'): void {
+  setTab(t: 'components' | 'calc' | 'fy' | 'tax' | 'profiles'): void {
     this.activeTab.set(t);
+  }
+
+  phaseMonthly(ph: { monthlyByComponentId: Record<string, number> }, componentId: string, fallbackAnnual: number): number {
+    const m = Number(ph.monthlyByComponentId?.[componentId]);
+    return Number.isFinite(m) ? m : (Number(fallbackAnnual) || 0) / 12;
+  }
+
+  applyHike(phaseId: string): void {
+    this.store.applyHikeToPhase(phaseId, Number(this.hikePercent) || 0);
+    this.hikePercent = null;
+  }
+
+  fyMonthIdx(v: unknown): FyMonthIndex {
+    const n = ((Math.round(Number(v) || 0) % 12) + 12) % 12;
+    return n as FyMonthIndex;
   }
 
   lineVal(line: LineItem): string {

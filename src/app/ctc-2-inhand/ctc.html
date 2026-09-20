@@ -31,9 +31,10 @@
 <nav class="tabs">
 <button [class.on]="activeTab()==='components'" (click)="setTab('components')">1. Components</button>
 <button [class.on]="activeTab()==='calc'" (click)="setTab('calc')">2. Complete calculation</button>
-<button [class.on]="activeTab()==='tax'" (click)="setTab('tax')">3. Tax slabs</button>
-<button [class.on]="activeTab()==='profiles'" (click)="setTab('profiles')">4. Profiles</button>
-<span class="profile-pill">Editing: <strong>{{ profile.name }}</strong></span>
+<button [class.on]="activeTab()==='fy'" (click)="setTab('fy')">3. FY / Appraisal</button>
+<button [class.on]="activeTab()==='tax'" (click)="setTab('tax')">4. Tax slabs</button>
+<button [class.on]="activeTab()==='profiles'" (click)="setTab('profiles')">5. Profiles</button>
+<span class="profile-pill">Editing: <strong>{{ profile.name }}</strong>@if (store.calculation()?.fyEnabled) { <span class="tag">FY mode</span> }</span>
 </nav>
 @if (activeTab()==='components') {
 <section class="grid2">
@@ -242,6 +243,87 @@
 </section>
 } @else {
 <section class="panel"><p class="muted">No calculation yet.</p></section>
+}
+}
+@if (activeTab()==='fy') {
+<section class="panel">
+<h2>Financial-year pro-rating (mid-year appraisal)</h2>
+<p class="muted">FY runs Apr–Mar. Split the year into phases (e.g. Pre-hike Apr–Jun, Post-hike Jul–Mar). Each phase holds MONTHLY rates; FY annual = Σ monthly × months. Tax + in-hand then run on the blended FY annual. Toggle off to go back to plain ×12 annuals.</p>
+<label class="check"><input type="checkbox" [ngModel]="profile.fy?.enabled === true" (ngModelChange)="store.setFyEnabled($event)" /> Enable FY mode for “{{ profile.name }}”</label>
+@if (profile.fy) {
+<label class="field"><span>FY label</span>
+<input [ngModel]="profile.fy.label" (ngModelChange)="store.setFyLabel($event)" placeholder="FY 2026–27 (Apr–Mar)" />
+</label>
+}
+<div class="actions">
+<button class="btn ghost" (click)="store.addPhase()">+ Add phase</button>
+</div>
+@if (profile.fy && store.calculation(); as fyc) {
+<table class="tbl">
+<thead><tr><th>Phase</th><th>Months</th><th>Span</th><th>Monthly CTC</th><th>FY CTC share</th><th>Monthly gross</th><th>Monthly cash</th></tr></thead>
+<tbody>
+@for (s of fyc.phaseSlices; track s.phaseId) {
+<tr>
+<td><b>{{ s.phaseName }}</b></td>
+<td>{{ s.months }} mo</td>
+<td class="muted">{{ fyMonthName(s.fromMonth) }}–{{ fyMonthName(s.toMonth) }}</td>
+<td class="num">{{ fmt(s.monthlyCtc) }}</td>
+<td class="num">{{ fmt(s.ctcAnnual) }}</td>
+<td class="num">{{ fmt(s.monthlyGross) }}</td>
+<td class="num">{{ fmt(s.monthlyCash) }}</td>
+</tr>
+}
+</tbody>
+</table>
+<p class="formula">Blended FY: CTC <b>{{ fmt(fyc.ctcAnnual) }}</b> · Gross <b>{{ fmt(fyc.grossTaxableAnnual) }}</b> − DEDN <b>{{ fmt(fyc.preTaxDeductionsAnnual) }}</b> = Final <b>{{ fmt(fyc.taxableIncomeAnnual) }}</b> → Tax <b>{{ fmt(fyc.totalTaxAnnual) }}</b> → In-hand <b>{{ fmt(fyc.inHandAnnual) }}</b>/yr ({{ fmt(fyc.inHandMonthly) }}/mo avg)</p>
+}
+</section>
+@if (profile.fy) {
+@for (ph of profile.fy.phases; track ph.id) {
+<section class="panel">
+<h2>{{ ph.name }} <small class="muted">{{ monthsInPhase(ph.fromMonth, ph.toMonth) }} months · {{ fyMonthName(ph.fromMonth) }}–{{ fyMonthName(ph.toMonth) }}</small></h2>
+<div class="row2">
+<label class="field"><span>Phase name</span>
+<input [ngModel]="ph.name" (ngModelChange)="store.updatePhase(ph.id,{name:$event})" />
+</label>
+<label class="field"><span>Hike % → apply to all monthly rows in this phase</span>
+<div class="hike-row">
+<input type="number" step="0.5" [(ngModel)]="hikePercent" placeholder="e.g. 10" />
+<button class="btn primary sm" (click)="applyHike(ph.id)">Apply {{ hikePercent || 0 }}%</button>
+<button class="btn ghost sm" (click)="store.syncPhaseFromAnnual(ph.id)">Reset = current annuals ÷ 12</button>
+<button class="btn danger sm" (click)="store.removePhase(ph.id)">Remove phase</button>
+</div>
+</label>
+</div>
+<div class="row2">
+<label class="field"><span>Effective from (FY month)</span>
+<select [ngModel]="ph.fromMonth" (ngModelChange)="store.updatePhase(ph.id,{fromMonth:fyMonthIdx($event)})">
+@for (m of fyMonths; track m.index) { <option [value]="m.index">{{ m.full }}</option> }
+</select>
+</label>
+<label class="field"><span>Effective to (FY month)</span>
+<select [ngModel]="ph.toMonth" (ngModelChange)="store.updatePhase(ph.id,{toMonth:fyMonthIdx($event)})">
+@for (m of fyMonths; track m.index) { <option [value]="m.index">{{ m.full }}</option> }
+</select>
+</label>
+</div>
+<div class="table-wrap">
+<table class="tbl">
+<thead><tr><th>Component</th><th>Monthly rate (₹/mo)</th><th>× {{ monthsInPhase(ph.fromMonth, ph.toMonth) }} mo = FY share</th><th>Role</th></tr></thead>
+<tbody>
+@for (c of profile.components; track c.id) {
+<tr>
+<td>{{ c.name }}</td>
+<td><input class="cell-input num" type="number" min="0" [ngModel]="phaseMonthly(ph, c.id, c.annualAmount)" (ngModelChange)="store.setPhaseMonthly(ph.id, c.id, +$event||0)" /></td>
+<td class="num">{{ fmt(phaseMonthly(ph, c.id, c.annualAmount) * monthsInPhase(ph.fromMonth, ph.toMonth)) }}</td>
+<td class="muted">@if (isPreTax(c)) { DEDN } @else if (c.taxable) { Gross } @else if (c.includeInHand) { Exempt } @else { CTC-only }</td>
+</tr>
+}
+</tbody>
+</table>
+</div>
+</section>
+}
 }
 }
 @if (activeTab()==='tax') {

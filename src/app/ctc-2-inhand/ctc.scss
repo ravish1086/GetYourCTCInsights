@@ -50,3 +50,6 @@ h1{margin:0 0 6px;font-size:30px}.sub{margin:0;color:#5b6b8c;max-width:640px}
 .formula{background:#fff;border:1px dashed #b9c6e2;border-radius:10px;padding:10px;font-size:13px;margin:10px 0 0}
 .tbl.lines td.num,.tbl.lines th:nth-child(n+3){text-align:right}
 .tag{display:inline-block;background:#e3ecff;color:#1d3a8f;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;margin-left:6px}
+.tbl td.num,.tbl th.num{text-align:right}
+.hike-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.hike-row input{flex:1;min-width:90px;border:1px solid #d5dded;border-radius:10px;padding:10px;font-size:14px}

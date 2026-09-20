@@ -1,5 +1,5 @@
 import { Injectable, signal, computed, effect } from '@angular/core';
-import { CtcCalculation, CtcComponent, SalaryProfile, TaxConfig, TaxSlab, DEFAULT_TAX_CONFIG, sampleComponents } from './ctc.models';
+import { CtcCalculation, CtcComponent, SalaryPhase, SalaryProfile, TaxConfig, TaxSlab, DEFAULT_TAX_CONFIG, FySettings, defaultFySettings, monthlyMapFromAnnual, sampleComponents } from './ctc.models';
 import { calculateCtc, sanitizeSlabs } from './ctc.calc';
 
 const LS_PROFILES = 'ctc2inhand.profiles.v1';
@@ -38,7 +38,7 @@ export class CtcStore {
   readonly calculation = computed<CtcCalculation | null>(() => {
     const p = this.activeProfile();
     if (!p) return null;
-    return calculateCtc(p.components, this.effectiveTax());
+    return calculateCtc(p.components, this.effectiveTax(), p.fy);
   });
 
   constructor() {
@@ -177,6 +177,119 @@ export class CtcStore {
 
   loadSampleComponents(): void {
     this.updateComponents(() => sampleComponents());
+  }
+
+  // ---------- FY pro-rating (mid-year appraisal) ----------
+  private patchActive(patch: (p: SalaryProfile) => SalaryProfile): void {
+    const id = this.activeProfileId();
+    if (!id) return;
+    this.profiles.update((arr) => arr.map((p) => (p.id === id ? patch(p) : p)));
+  }
+
+  private ensureFy(): FySettings {
+    const active = this.activeProfile();
+    if (active?.fy) return active.fy;
+    const fy = defaultFySettings(monthlyMapFromAnnual(active?.components ?? []));
+    this.patchActive((p) => ({ ...p, fy, updatedAt: Date.now() }));
+    return fy;
+  }
+
+  setFyEnabled(enabled: boolean): void {
+    const fy = this.ensureFy();
+    this.patchActive((p) => ({ ...p, fy: { ...(p.fy ?? fy), enabled }, updatedAt: Date.now() }));
+  }
+
+  setFyLabel(label: string): void {
+    const fy = this.ensureFy();
+    this.patchActive((p) => ({ ...p, fy: { ...(p.fy ?? fy), label }, updatedAt: Date.now() }));
+  }
+
+  addPhase(): void {
+    const fy = this.ensureFy();
+    const active = this.activeProfile();
+    const phase: SalaryPhase = {
+      id: `ph_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      name: `Phase ${(fy.phases.length + 1)}`,
+      fromMonth: 0,
+      toMonth: 11,
+      monthlyByComponentId: monthlyMapFromAnnual(active?.components ?? []),
+    };
+    this.patchActive((p) => ({
+      ...p,
+      fy: { ...(p.fy ?? fy), phases: [...(p.fy ?? fy).phases, phase] },
+      updatedAt: Date.now(),
+    }));
+  }
+
+  removePhase(phaseId: string): void {
+    this.patchActive((p) => ({
+      ...p,
+      fy: p.fy ? { ...p.fy, phases: p.fy.phases.filter((ph) => ph.id !== phaseId) } : p.fy,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  updatePhase(phaseId: string, patch: Partial<SalaryPhase>): void {
+    this.patchActive((p) => ({
+      ...p,
+      fy: p.fy
+        ? { ...p.fy, phases: p.fy.phases.map((ph) => (ph.id === phaseId ? { ...ph, ...patch } : ph)) }
+        : p.fy,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  setPhaseMonthly(phaseId: string, componentId: string, monthly: number): void {
+    this.patchActive((p) => ({
+      ...p,
+      fy: p.fy
+        ? {
+            ...p.fy,
+            phases: p.fy.phases.map((ph) =>
+              ph.id === phaseId
+                ? { ...ph, monthlyByComponentId: { ...ph.monthlyByComponentId, [componentId]: Math.max(0, Number(monthly) || 0) } }
+                : ph
+            ),
+          }
+        : p.fy,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  syncPhaseFromAnnual(phaseId: string): void {
+    const active = this.activeProfile();
+    if (!active) return;
+    const map = monthlyMapFromAnnual(active.components);
+    this.patchActive((p) => ({
+      ...p,
+      fy: p.fy
+        ? { ...p.fy, phases: p.fy.phases.map((ph) => (ph.id === phaseId ? { ...ph, monthlyByComponentId: map } : ph)) }
+        : p.fy,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  applyHikeToPhase(phaseId: string, percent: number): void {
+    const pct = Number(percent) || 0;
+    if (!pct) return;
+    this.patchActive((p) => {
+      if (!p.fy) return p;
+      return {
+        ...p,
+        fy: {
+          ...p.fy,
+          phases: p.fy.phases.map((ph) => {
+            if (ph.id !== phaseId) return ph;
+            const next: Record<string, number> = {};
+            for (const [k, v] of Object.entries(ph.monthlyByComponentId)) {
+              next[k] = Math.round((Number(v) || 0) * (1 + pct / 100));
+            }
+            return { ...ph, monthlyByComponentId: next };
+          }),
+        },
+        updatedAt: Date.now(),
+      };
+    });
   }
 
   updateGlobalTax(patch: Partial<TaxConfig>): void {
