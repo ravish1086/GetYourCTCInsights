@@ -1,0 +1,353 @@
+<div class="page">
+<header class="hero">
+<div>
+<p class="eyebrow">CTC_2_Inhand - private - browser storage only</p>
+<h1>CTC to In-Hand Salary Planner</h1>
+<p class="sub">Add unlimited components, compare offer profiles, configure tax slabs + cess. Nothing leaves your browser.</p>
+</div>
+<div class="hero-actions">
+<div class="seg">
+<button [class.on]="viewMode()==='annual'" (click)="viewMode.set('annual')">Annual</button>
+<button [class.on]="viewMode()==='monthly'" (click)="viewMode.set('monthly')">Monthly</button>
+</div>
+<button class="btn ghost" (click)="doExport()">Export backup</button>
+</div>
+</header>
+@if (store.activeProfile(); as profile) {
+@if (store.calculation(); as calc) {
+<section class="cards">
+<div class="card highlight">
+<span class="label">In-Hand {{ viewMode()==='annual' ? 'per year' : 'per month' }}</span>
+<strong>{{ shown(calc.inHandAnnual) }}</strong>
+<small>In-hand {{ fmt(calc.inHandMonthly) }}/mo - CTC {{ fmt(calc.ctcAnnual) }}/yr</small>
+</div>
+<div class="card"><span class="label">CTC</span><strong>{{ shown(calc.ctcAnnual) }}</strong><small>Cash {{ fmt(calc.grossCashAnnual) }}</small></div>
+<div class="card"><span class="label">Taxable (final)</span><strong>{{ shown(calc.taxableIncomeAnnual) }}</strong><small>Gross {{ fmt(calc.grossTaxableAnnual) }} − DEDN {{ fmt(calc.preTaxDeductionsAnnual) }}</small></div>
+<div class="card"><span class="label">Total tax</span><strong>{{ shown(calc.totalTaxAnnual) }}</strong><small>On final {{ fmt(calc.taxableIncomeAnnual) }}: base {{ fmt(calc.baseTaxAnnual) }} + cess {{ fmt(calc.cessAnnual) }}</small></div>
+<div class="card"><span class="label">DEDN</span><strong>{{ shown(calc.employeeDeductionsAnnual) }}</strong><small>Not in CTC, subtracted from gross</small></div>
+<div class="card"><span class="label">Effective</span><strong>{{ calc.effectiveTaxRateOnCtc.toFixed(2) }}% of CTC</strong><small>{{ calc.effectiveTaxRateOnTaxable.toFixed(2) }}% of taxable</small></div>
+</section>
+}
+<nav class="tabs">
+<button [class.on]="activeTab()==='components'" (click)="setTab('components')">1. Components</button>
+<button [class.on]="activeTab()==='calc'" (click)="setTab('calc')">2. Complete calculation</button>
+<button [class.on]="activeTab()==='tax'" (click)="setTab('tax')">3. Tax slabs</button>
+<button [class.on]="activeTab()==='profiles'" (click)="setTab('profiles')">4. Profiles</button>
+<span class="profile-pill">Editing: <strong>{{ profile.name }}</strong></span>
+</nav>
+@if (activeTab()==='components') {
+<section class="grid2">
+<div class="panel">
+<h2>Add component</h2>
+<p class="muted">Unlimited rows. DEDN is NOT part of CTC — just subtracted from gross: Final = Gross − DEDN, tax on final.</p>
+<label class="field"><span>Name</span>
+<input [(ngModel)]="newName" placeholder="e.g. Basic Salary" />
+</label>
+<div class="row2">
+<label class="field"><span>Amount (Rs)</span>
+<input type="number" min="0" [(ngModel)]="newAmount" placeholder="600000" />
+</label>
+<label class="field"><span>Type</span>
+<select [(ngModel)]="newCategory">
+@for (k of categoryKeys; track k) {
+<option [value]="k">{{ categoryMeta[k].label }}</option>
+}
+</select>
+</label>
+</div>
+<p class="muted">{{ categoryMeta[newCategory].hint }}</p>
+<label class="check"><input type="checkbox" [(ngModel)]="newMonthly" /> Monthly amount (x12)</label>
+<div class="actions">
+<button class="btn primary" (click)="addComponent()">+ Add</button>
+<button class="btn ghost" (click)="store.loadSampleComponents()">Sample salary</button>
+</div>
+</div>
+<div class="panel">
+<h2>Slab breakup</h2>
+@if (store.calculation(); as c2) {
+<button class="btn ghost" (click)="showBreakup.set(!showBreakup())">{{ showBreakup() ? 'Hide' : 'Show' }}</button>
+@if (showBreakup()) {
+<table class="tbl breakup">
+<thead><tr><th>Slab</th><th>Rate</th><th>In slab</th><th>Tax</th></tr></thead>
+<tbody>
+@for (b of c2.breakup; track b.slab.id) {
+<tr [class.zero]="b.taxableInSlab===0">
+<td>{{ fmt(b.slab.from) }} - {{ slabToLabel(b.slab.to) }}</td>
+<td>{{ b.slab.ratePercent }}%</td>
+<td>{{ fmt(b.taxableInSlab) }}</td>
+<td>{{ fmt(b.taxInSlab) }}</td>
+</tr>
+}
+</tbody>
+</table>
+}
+}
+<ul class="legend">
+<li>Gross = earnings only (DEDN never added).</li>
+<li>DEDN subtracted from gross: Final = Gross − DEDN (100000 − 10000 = 90000). Slabs + cess + surcharge on Final.</li>
+<li>In-hand = cash (no DEDN) − tax on final.</li>
+</ul>
+</div>
+</section>
+<section class="panel">
+<h2>Components ({{ profile.components.length }})</h2>
+@if (profile.components.length === 0) {
+<p class="muted">No components yet.</p>
+} @else {
+<div class="table-wrap">
+<table class="tbl">
+<thead><tr><th>Name</th><th>Annual</th><th>/mo</th><th>Type</th><th>CTC</th><th>Gross</th><th>Cash</th><th>DEDN?</th><th></th></tr></thead>
+<tbody>
+@for (c of profile.components; track c.id) {
+<tr>
+<td><input class="cell-input name" [ngModel]="c.name" (ngModelChange)="store.updateComponent(c.id,{name:$event})" /></td>
+<td><input class="cell-input num" type="number" min="0" [ngModel]="c.annualAmount" (ngModelChange)="store.updateComponent(c.id,{annualAmount:+$event||0})" /></td>
+<td class="muted">{{ fmt(perMonth(c.annualAmount)) }}</td>
+<td>
+<select [ngModel]="c.category" (ngModelChange)="store.updateComponent(c.id,{category:$event})">
+@for (k of categoryKeys; track k) { <option [value]="k">{{ categoryMeta[k].label }}</option> }
+</select>
+</td>
+<td><input type="checkbox" [ngModel]="c.includeInCtc" (ngModelChange)="store.updateComponent(c.id,{includeInCtc:$event})" title="DEDN is never part of CTC" /></td>
+<td><input type="checkbox" [ngModel]="c.taxable" (ngModelChange)="store.updateComponent(c.id,{taxable:$event})" title="DEDN is never in gross" /></td>
+<td><input type="checkbox" [ngModel]="c.includeInHand" (ngModelChange)="store.updateComponent(c.id,{includeInHand:$event})" title="DEDN is never cash" /></td>
+<td><input type="checkbox" [ngModel]="isPreTax(c)" (ngModelChange)="toggleDedn(c,$event)" title="DEDN: subtracted from gross → Final = Gross − DEDN, tax on final" /></td>
+<td><button class="btn danger sm" (click)="store.removeComponent(c.id)">X</button></td>
+</tr>
+}
+</tbody>
+</table>
+</div>
+}
+</section>
+}
+@if (activeTab()==='calc') {
+@if (store.calculation(); as cc) {
+<section class="panel">
+<h2>Complete calculation — {{ viewMode()==='annual' ? 'Annual' : 'Monthly' }} (every component, step by step)</h2>
+<p class="muted">A. Gross = earnings only (DEDN never added) → B. DEDN subtracted → C. Final taxable → D. Slab tax on final → E. In-hand = Cash − tax. Exempt, employer-only, CTC audit below.</p>
+<div class="steps">
+<div class="step">
+<h3>A. Gross — earnings only (no DEDN) <span class="total">{{ shown(cc.grossTaxableAnnual) }}</span></h3>
+@if (cc.grossLines.length === 0) { <p class="muted">No taxable rows.</p> } @else {
+<table class="tbl lines">
+<thead><tr><th>#</th><th>Component</th><th>Type</th><th>Amount</th><th>Running gross</th></tr></thead>
+<tbody>
+@for (l of cc.grossLines; track l.component.id; let i = $index) {
+<tr>
+<td>{{ i + 1 }}</td>
+<td>{{ l.component.name }}</td>
+<td class="muted">{{ categoryMeta[l.component.category].label }}</td>
+<td class="num">+ {{ shown(l.component.annualAmount) }}</td>
+<td class="num"><b>{{ lineRun(l) }}</b></td>
+</tr>
+}
+</tbody>
+</table>
+}
+</div>
+<div class="step">
+<h3>B. Less: DEDN (not part of CTC, subtracted from gross) <span class="total neg">− {{ shown(cc.preTaxDeductionsAnnual) }}</span></h3>
+@if (cc.deductionLines.length === 0) { <p class="muted">No deduction rows — add PF / PT / 80C / Standard Deduction as type “Deduction”.</p> } @else {
+<table class="tbl lines">
+<thead><tr><th>#</th><th>Deduction</th><th>Amount</th><th>Gross − so far</th></tr></thead>
+<tbody>
+@for (l of cc.deductionLines; track l.component.id; let i = $index) {
+<tr>
+<td>{{ i + 1 }}</td>
+<td>{{ l.component.name }}</td>
+<td class="num">− {{ shown(l.component.annualAmount) }}</td>
+<td class="num">{{ fmt((viewMode()==='annual' ? cc.grossTaxableAnnual : cc.grossTaxableAnnual/12) - (viewMode()==='annual' ? l.runningTotal : l.runningTotal/12)) }}</td>
+</tr>
+}
+</tbody>
+</table>
+}
+<p class="formula">C. Final taxable = {{ shown(cc.grossTaxableAnnual) }} − {{ shown(cc.preTaxDeductionsAnnual) }} = <b>{{ shown(cc.taxableIncomeAnnual) }}</b> (e.g. 100000 − 10000 = 90000 → slabs on 90000)</p>
+</div>
+<div class="step">
+<h3>D. Slab-wise tax on FINAL {{ shown(cc.taxableIncomeAnnual) }}</h3>
+<table class="tbl breakup">
+<thead><tr><th>Slab</th><th>Rate</th><th>Taxable in slab</th><th>Tax</th></tr></thead>
+<tbody>
+@for (b of cc.breakup; track b.slab.id) {
+<tr [class.zero]="b.taxableInSlab===0">
+<td>{{ fmt(b.slab.from) }} - {{ slabToLabel(b.slab.to) }}</td>
+<td>{{ b.slab.ratePercent }}%</td>
+<td>{{ fmt(b.taxableInSlab) }}</td>
+<td>{{ fmt(b.taxInSlab) }}</td>
+</tr>
+}
+</tbody>
+</table>
+<p class="formula">Base {{ fmt(cc.baseTaxAnnual) }} + cess {{ store.effectiveTax().cessPercent }}% = {{ fmt(cc.cessAnnual) }} + {{ store.effectiveTax().surchargeLabel }} {{ store.effectiveTax().surchargePercent }}% = {{ fmt(cc.surchargeAnnual) }} → <b>Total tax {{ shown(cc.totalTaxAnnual) }}</b></p>
+</div>
+<div class="step">
+<h3>E. Cash earnings build-up <span class="total">{{ shown(cc.grossCashAnnual) }}</span></h3>
+<table class="tbl lines">
+<thead><tr><th>#</th><th>Component</th><th>Amount</th><th>Running cash</th></tr></thead>
+<tbody>
+@for (l of cc.cashLines; track l.component.id; let i = $index) {
+<tr>
+<td>{{ i + 1 }}</td>
+<td>{{ l.component.name }}</td>
+<td class="num">+ {{ shown(l.component.annualAmount) }}</td>
+<td class="num"><b>{{ lineRun(l) }}</b></td>
+</tr>
+}
+</tbody>
+</table>
+<p class="formula">In-hand = {{ shown(cc.grossCashAnnual) }} (cash, no DEDN) − {{ shown(cc.totalTaxAnnual) }} (tax on final) = <b>{{ shown(cc.inHandAnnual) }}</b> {{ viewMode()==='annual' ? '' : 'per month' }}</p>
+</div>
+<div class="grid2">
+<div class="step">
+<h3>Exempt / reimbursements (never taxed) <span class="total">{{ shown(cc.exemptIncomeAnnual) }}</span></h3>
+@if (cc.exemptLines.length === 0) { <p class="muted">None.</p> } @else {
+<table class="tbl lines">
+<thead><tr><th>Component</th><th>Amount</th></tr></thead>
+<tbody>
+@for (l of cc.exemptLines; track l.component.id) {
+<tr><td>{{ l.component.name }}</td><td class="num">+ {{ shown(l.component.annualAmount) }}</td></tr>
+}
+</tbody>
+</table>
+}
+</div>
+<div class="step">
+<h3>Employer-only cost (CTC only, not in-hand) <span class="total">{{ shown(cc.employerCostOnlyAnnual) }}</span></h3>
+@if (cc.employerOnlyLines.length === 0) { <p class="muted">None.</p> } @else {
+<table class="tbl lines">
+<thead><tr><th>Component</th><th>Amount</th></tr></thead>
+<tbody>
+@for (l of cc.employerOnlyLines; track l.component.id) {
+<tr><td>{{ l.component.name }}</td><td class="num">+ {{ shown(l.component.annualAmount) }}</td></tr>
+}
+</tbody>
+</table>
+}
+</div>
+</div>
+<div class="step">
+<h3>CTC build-up <span class="total">{{ shown(cc.ctcAnnual) }}</span></h3>
+<table class="tbl lines">
+<thead><tr><th>#</th><th>Component</th><th>In CTC?</th><th>Amount</th><th>Running CTC</th></tr></thead>
+<tbody>
+@for (l of cc.ctcLines; track l.component.id; let i = $index) {
+<tr><td>{{ i + 1 }}</td><td>{{ l.component.name }}</td><td>yes</td><td class="num">+ {{ shown(l.component.annualAmount) }}</td><td class="num"><b>{{ lineRun(l) }}</b></td></tr>
+}
+</tbody>
+</table>
+</div>
+</div>
+</section>
+} @else {
+<section class="panel"><p class="muted">No calculation yet.</p></section>
+}
+}
+@if (activeTab()==='tax') {
+<section class="grid2">
+<div class="panel">
+<h2>Global tax config</h2>
+<div class="row2">
+<label class="field"><span>Cess % (default 4)</span>
+<input type="number" min="0" max="100" step="0.1" [ngModel]="store.globalTax().cessPercent" (ngModelChange)="store.updateGlobalTax({cessPercent:+$event||0})" />
+</label>
+<label class="field"><span>Surcharge %</span>
+<input type="number" min="0" max="100" step="0.1" [ngModel]="store.globalTax().surchargePercent" (ngModelChange)="store.updateGlobalTax({surchargePercent:+$event||0})" />
+</label>
+</div>
+<table class="tbl">
+<thead><tr><th>From</th><th>To (empty = no limit)</th><th>Rate %</th><th></th></tr></thead>
+<tbody>
+@for (s of store.globalTax().slabs; track s.id) {
+<tr>
+<td><input class="cell-input num" type="number" min="0" [ngModel]="s.from" (ngModelChange)="store.updateGlobalSlab(s.id,{from:+$event||0})" /></td>
+<td><input class="cell-input num" type="number" min="0" [ngModel]="s.to" (ngModelChange)="store.updateGlobalSlab(s.id,{to:($event===''||$event===null)?null:+$event})" placeholder="No limit" /></td>
+<td><input class="cell-input num" type="number" min="0" max="100" step="0.5" [ngModel]="s.ratePercent" (ngModelChange)="store.updateGlobalSlab(s.id,{ratePercent:+$event||0})" /></td>
+<td><button class="btn danger sm" (click)="store.removeGlobalSlab(s.id)">X</button></td>
+</tr>
+}
+</tbody>
+</table>
+<div class="actions">
+<button class="btn ghost" (click)="store.addGlobalSlab()">+ Add slab</button>
+<button class="btn ghost" (click)="store.resetGlobalTax()">Reset default</button>
+</div>
+<p class="muted">Default: 0-4L Nil, 4-8L 5%, 8-12L 10%, 12-16L 15%, 16-20L 20%, 20-24L 25%, above 24L 30% + 4% cess.</p>
+</div>
+<div class="panel">
+<h2>This profile: {{ profile.name }}</h2>
+<label class="check"><input type="checkbox" [ngModel]="profile.useGlobalTaxConfig" (ngModelChange)="store.setUseGlobalTax($event)" /> Use global tax config</label>
+@if (!profile.useGlobalTaxConfig && profile.taxOverride; as ov) {
+<div class="row2">
+<label class="field"><span>Cess %</span>
+<input type="number" min="0" max="100" step="0.1" [ngModel]="ov.cessPercent" (ngModelChange)="store.updateProfileTax({cessPercent:+$event||0})" />
+</label>
+<label class="field"><span>Surcharge %</span>
+<input type="number" min="0" max="100" step="0.1" [ngModel]="ov.surchargePercent" (ngModelChange)="store.updateProfileTax({surchargePercent:+$event||0})" />
+</label>
+</div>
+<table class="tbl">
+<thead><tr><th>From</th><th>To</th><th>Rate</th></tr></thead>
+<tbody>
+@for (s of ov.slabs; track s.id) {
+<tr>
+<td><input class="cell-input num" type="number" [ngModel]="s.from" (ngModelChange)="store.updateProfileSlab(s.id,{from:+$event||0})" /></td>
+<td><input class="cell-input num" type="number" [ngModel]="s.to" (ngModelChange)="store.updateProfileSlab(s.id,{to:($event===''||$event===null)?null:+$event})" placeholder="No limit" /></td>
+<td><input class="cell-input num" type="number" [ngModel]="s.ratePercent" (ngModelChange)="store.updateProfileSlab(s.id,{ratePercent:+$event||0})" /></td>
+</tr>
+}
+</tbody>
+</table>
+} @else {
+<p class="muted">Follows global slabs. Uncheck to customise per offer.</p>
+}
+</div>
+</section>
+}
+@if (activeTab()==='profiles') {
+<section class="grid2">
+<div class="panel">
+<h2>Profiles</h2>
+<div class="profiles">
+@for (p of store.profiles(); track p.id) {
+<div class="prof" [class.on]="p.id===profile.id">
+<button class="prof-name" (click)="store.selectProfile(p.id)">{{ p.name }}</button>
+<small>{{ p.components.length }} items</small>
+<button class="btn danger sm" (click)="store.deleteProfile(p.id)">Delete</button>
+</div>
+}
+</div>
+<label class="field"><span>Rename active</span>
+<input [ngModel]="profile.name" (ngModelChange)="store.renameActive($event)" />
+</label>
+<label class="field"><span>New profile name</span>
+<input [(ngModel)]="newProfileName" placeholder="e.g. Startup Offer 18 LPA" />
+</label>
+<div class="actions">
+<button class="btn primary" (click)="createProfile()">+ Copy current</button>
+<button class="btn ghost" (click)="createBlankProfile()">Blank</button>
+<button class="btn ghost" (click)="store.duplicateActive()">Duplicate</button>
+</div>
+</div>
+<div class="panel">
+<h2>Backup and privacy</h2>
+<p class="muted">Autosaved to localStorage only. Export JSON before clearing browser data.</p>
+<div class="actions">
+<button class="btn ghost" (click)="doExport()">Download backup</button>
+<button class="btn ghost" (click)="showImport.set(!showImport())">{{ showImport() ? 'Cancel' : 'Import' }}</button>
+<button class="btn danger" (click)="store.clearAllData()">Erase all</button>
+</div>
+@if (showImport()) {
+<label class="field"><span>Paste backup JSON</span>
+<textarea rows="6" [(ngModel)]="importText"></textarea>
+</label>
+<button class="btn primary" (click)="doImport()">Restore</button>
+}
+</div>
+</section>
+}
+} @else {
+<section class="panel"><p class="muted">No profile yet.</p></section>
+}
+</div>
